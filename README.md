@@ -21,6 +21,12 @@ curl -fsSL https://raw.githubusercontent.com/humbertogfs55/dotafetch/main/instal
 Requires the Rust toolchain (`cargo`) - see https://rustup.rs if you don't
 have it. Installs to `~/.cargo/bin/dotafetch`.
 
+## Uninstall
+
+```
+curl -fsSL https://raw.githubusercontent.com/humbertogfs55/dotafetch/main/uninstall.sh | bash
+```
+
 ## Build & run
 
 ```
