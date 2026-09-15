@@ -7,7 +7,6 @@ use std::io::{IsTerminal, Write};
 use crate::ansi;
 use crate::art;
 use crate::heroes;
-use crate::image_logo;
 use crate::stats::Stats;
 
 /// Like `println!`, but ignores write errors instead of panicking - a
@@ -57,52 +56,100 @@ struct Section {
     lines: Vec<String>,
 }
 
-fn rule_line(pal: &Palette, title: &str, width: usize) -> String {
+/// Top border of a section's box: `┌──title──┐`, `width` visible columns
+/// between the corners.
+fn top_border(pal: &Palette, title: &str, width: usize) -> String {
     let dashes = width.saturating_sub(ansi::visible_width(title));
     let left = dashes / 2;
     let right = dashes - left;
     format!(
-        "{}{}{title}{}{}",
+        "{}┌{}{}{title}{}{}┐{}",
         pal.dim,
         "─".repeat(left),
+        pal.reset,
+        pal.dim,
         "─".repeat(right),
         pal.reset,
     )
 }
 
-/// Renders one section as `["<rule with title>", "  first line", "├ ...",
-/// ..., "└ last line"]`, all padded to `width` visible columns.
+/// Bottom border of a section's box: `└──────┘`, `width` visible columns
+/// between the corners.
+fn bottom_border(pal: &Palette, width: usize) -> String {
+    format!("{}└{}┘{}", pal.dim, "─".repeat(width), pal.reset)
+}
+
+/// Renders one section as a bordered box: a `top_border`, then the content
+/// lines (first line unprefixed, middle lines behind `│ ├`, the last line
+/// behind `└ └` - the box's left edge and the tree's own corner turning
+/// together), then a `bottom_border`. All content lines are padded to
+/// `width` visible columns.
 fn render_section(pal: &Palette, section: &Section, width: usize) -> Vec<String> {
-    let mut out = vec![rule_line(pal, &section.title, width)];
+    let mut out = vec![top_border(pal, &section.title, width)];
     let last = section.lines.len().saturating_sub(1);
     for (i, line) in section.lines.iter().enumerate() {
-        let connector = if i == 0 {
-            "  ".to_string()
+        let prefix = if i == 0 {
+            "    ".to_string()
         } else if i == last {
-            format!("{}└{} ", pal.dim, pal.reset)
+            format!("{}└ └{} ", pal.dim, pal.reset)
         } else {
-            format!("{}├{} ", pal.dim, pal.reset)
+            format!("{}│ ├{} ", pal.dim, pal.reset)
         };
-        out.push(format!("{connector}{line}"));
+        out.push(format!("{prefix}{line}"));
     }
+    out.push(bottom_border(pal, width));
     out
 }
 
+
+// Nerd Font glyph placeholders, one per stat line - picked to fit each
+// stat for now; swap these out once the icon-pack feature lands. Written as
+// `\u{...}` escapes (rather than literal glyphs) so the exact codepoint is
+// unambiguous in source.
+const ICON_MATCHES: &str = "\u{f11b}"; // fa-gamepad
+const ICON_WINS: &str = "\u{f091}"; // fa-trophy
+const ICON_LOSSES: &str = "\u{f057}"; // fa-times-circle
+const ICON_HERO: &str = "\u{f007}"; // fa-user
+const ICON_BEHAVIOR: &str = "\u{f21e}"; // fa-heartbeat
+const ICON_COMMENDS: &str = "\u{f087}"; // fa-thumbs-o-up
+const ICON_REPORTS: &str = "\u{f024}"; // fa-flag
+const ICON_RECENT: &str = "\u{f1da}"; // fa-history
+const ICON_PEAK_KILLS: &str = "\u{f05b}"; // fa-crosshairs
+const ICON_PEAK_ASSISTS: &str = "\u{f0c0}"; // fa-users
+const ICON_PEAK_GPM: &str = "\u{f155}"; // fa-usd
+const ICON_PEAK_XPM: &str = "\u{f0e7}"; // fa-bolt
+const ICON_PEAK_DURATION: &str = "\u{f017}"; // fa-clock-o
+const ICON_PEAK_NETWORTH: &str = "\u{f0d6}"; // fa-money
+
+/// Formats one career-peak line: `<icon> <label>  <value><unit> (<heroes>)`,
+/// omitting the hero list entirely when the peak has no record yet.
+fn peak_line(icon: &str, label: &str, unit: &str, peak: &crate::stats::PeakRecord) -> String {
+    let heroes = if peak.hero_ids.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<String> = peak.hero_ids.iter().map(|&id| heroes::name(id)).collect();
+        format!(" ({})", names.join(" / "))
+    };
+    format!("{icon} {label:<19}{}{unit}{heroes}", peak.value)
+}
 
 fn build_sections(pal: &Palette, stats: &Stats) -> Vec<Section> {
     let mut sections = Vec::new();
 
     let lifetime = &stats.lifetime;
     let lifetime_lines = vec![
-        format!("Matches: {}", lifetime.total()),
+        format!("{ICON_MATCHES} Matches: {}", lifetime.total()),
         format!(
-            "Wins:    {}{}{} ({:.1}%)",
+            "{ICON_WINS} Wins:    {}{}{} ({:.1}%)",
             pal.green,
             lifetime.wins,
             pal.reset,
             lifetime.winrate()
         ),
-        format!("Losses:  {}{}{}", pal.red, lifetime.losses, pal.reset),
+        format!(
+            "{ICON_LOSSES} Losses:  {}{}{}",
+            pal.red, lifetime.losses, pal.reset
+        ),
     ];
     sections.push(Section {
         title: "Lifetime".to_string(),
@@ -110,6 +157,24 @@ fn build_sections(pal: &Palette, stats: &Stats) -> Vec<Section> {
     });
 
     if !stats.top_heroes.is_empty() {
+        let peaks = &stats.career_peaks;
+        sections.push(Section {
+            title: "Career Peaks".to_string(),
+            lines: vec![
+                peak_line(ICON_PEAK_KILLS, "Most Kills:", "", &peaks.most_kills),
+                peak_line(ICON_PEAK_ASSISTS, "Most Assists:", "", &peaks.most_assists),
+                peak_line(ICON_PEAK_GPM, "Highest GPM:", "", &peaks.highest_gpm),
+                peak_line(ICON_PEAK_XPM, "Highest XPM:", "", &peaks.highest_xpm),
+                peak_line(ICON_PEAK_DURATION, "Longest Game:", "s", &peaks.longest_game),
+                peak_line(
+                    ICON_PEAK_NETWORTH,
+                    "Highest Net Worth:",
+                    "",
+                    &peaks.highest_net_worth,
+                ),
+            ],
+        });
+
         sections.push(Section {
             title: "Top Heroes".to_string(),
             lines: stats
@@ -118,7 +183,7 @@ fn build_sections(pal: &Palette, stats: &Stats) -> Vec<Section> {
                 .take(5)
                 .map(|h| {
                     format!(
-                        "{:<16} {}{:>3}W{} {}{:>3}L{} ({:>5.1}%)",
+                        "{ICON_HERO} {:<16} {}{:>3}W{} {}{:>3}L{} ({:>5.1}%)",
                         heroes::name(h.hero_id),
                         pal.green,
                         h.wins,
@@ -137,16 +202,19 @@ fn build_sections(pal: &Palette, stats: &Stats) -> Vec<Section> {
         sections.push(Section {
             title: "Conduct".to_string(),
             lines: vec![
-                format!("Behavior: {}", conduct.behavior_rating),
-                format!("Commends: {}{}{}", pal.green, conduct.commend_count, pal.reset),
+                format!("{ICON_BEHAVIOR} Behavior: {}", conduct.behavior_rating),
                 format!(
-                    "Reports:  {}{}{}",
+                    "{ICON_COMMENDS} Commends: {}{}{}",
+                    pal.green, conduct.commend_count, pal.reset
+                ),
+                format!(
+                    "{ICON_REPORTS} Reports:  {}{}{}",
                     if conduct.reports_count > 0 { pal.red } else { "" },
                     conduct.reports_count,
                     pal.reset
                 ),
                 format!(
-                    "Recent matches clean/abandoned: {}/{}",
+                    "{ICON_RECENT} Recent matches clean/abandoned: {}/{}",
                     conduct.matches_clean, conduct.matches_abandoned
                 ),
             ],
@@ -170,37 +238,6 @@ fn print_with_logo(right_lines: &[String]) {
     }
 }
 
-/// Small downward nudge so the logo doesn't look top-flush against the
-/// header line - just enough to read as vertically centered next to it.
-const IMAGE_ROW_OFFSET: u32 = 1;
-
-/// Prints `right_lines` overlaid on the real Dota 2 logo image, using the
-/// Kitty graphics protocol. The image is placed without moving the cursor
-/// (`image_logo::print`'s `C=1`), then each line is positioned relative to
-/// that same start point (saved once via DECSC) so text and image share
-/// their rows without either one disturbing the other.
-fn print_with_image_logo(right_lines: &[String]) {
-    let rows = right_lines.len().max(1) as u32;
-    let mut stdout = std::io::stdout();
-
-    let _ = write!(stdout, "\x1b7"); // DECSC: save cursor as our anchor
-    let _ = write!(stdout, "\x1b[{IMAGE_ROW_OFFSET}B"); // nudge the logo down
-    let cols = image_logo::print(rows);
-    let indent = cols + 2; // logo width + gap
-
-    for (i, line) in right_lines.iter().enumerate() {
-        let _ = write!(stdout, "\x1b8"); // DECRC: back to the anchor
-        if i > 0 {
-            let _ = write!(stdout, "\x1b[{i}B");
-        }
-        let _ = write!(stdout, "\x1b[{indent}C{line}");
-    }
-
-    // Leave the cursor on a fresh line below both the image and the text.
-    let _ = writeln!(stdout, "\x1b8\x1b[{}B", rows + IMAGE_ROW_OFFSET);
-    let _ = stdout.flush();
-}
-
 /// Centers `text` within `width` visible columns.
 fn center(text: &str, width: usize) -> String {
     let pad = width.saturating_sub(ansi::visible_width(text));
@@ -213,18 +250,26 @@ pub fn print(persona_name: &str, stats: &Stats) {
     let pal = Palette::detect();
     let sections = build_sections(&pal, stats);
 
-    // Width shared by every section's rule and content, so right edges line
-    // up the way Omarchy's fastfetch config does. Content lines get a
-    // 2-column connector prefix ("├ " / "└ "), so budget for that too.
+    // Interior width shared by every section's box, so right edges line up
+    // the way Omarchy's fastfetch config does. Content lines get a 4-column
+    // border+connector prefix ("│ ├ " / "└ └ " / "    "), so budget for that
+    // too.
     let width = sections
         .iter()
         .flat_map(|s| {
             std::iter::once(ansi::visible_width(&s.title))
-                .chain(s.lines.iter().map(|l| ansi::visible_width(l) + 2))
+                .chain(s.lines.iter().map(|l| ansi::visible_width(l) + 4))
         })
         .max()
         .unwrap_or(20);
-    let header = format!("{}{}{}", pal.bold, center(persona_name, width), pal.reset);
+    // +2 for the box's corner columns (┌┐ / └┘), so the header lines up with
+    // the box's full outer width, not just its interior.
+    let header = format!(
+        "{}{}{}",
+        pal.bold,
+        center(persona_name, width + 2),
+        pal.reset
+    );
 
     let mut right = vec![header, String::new()];
     for section in &sections {
@@ -233,9 +278,5 @@ pub fn print(persona_name: &str, stats: &Stats) {
     }
     right.pop(); // drop the trailing blank line
 
-    if image_logo::supported() {
-        print_with_image_logo(&right);
-    } else {
-        print_with_logo(&right);
-    }
+    print_with_logo(&right);
 }

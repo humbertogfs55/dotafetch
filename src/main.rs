@@ -1,7 +1,6 @@
 mod ansi;
 mod art;
 mod heroes;
-mod image_logo;
 mod locate;
 mod render;
 mod stats;
