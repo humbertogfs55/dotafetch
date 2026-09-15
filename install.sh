@@ -10,7 +10,9 @@ command -v cargo >/dev/null 2>&1 || {
 }
 
 echo "Installing dotafetch (cargo install --git)..."
-cargo install --git https://github.com/humbertogfs55/dotafetch --locked
+# --force: without it, cargo silently no-ops on rerun once already
+# installed, so re-running this script would never pick up new commits.
+cargo install --git https://github.com/humbertogfs55/dotafetch --locked --force
 
 CARGO_BIN="$HOME/.cargo/bin"
 
@@ -25,29 +27,34 @@ case ":$PATH:" in
 esac
 
 # Edge case (cargo came from a distro package, not rustup): $CARGO_BIN
-# exists but isn't on PATH anywhere. Add it to the current shell's rc file
-# so new terminals pick it up automatically, rather than leaving the user
-# with a binary they can't run.
-case "$(basename "${SHELL:-}")" in
-    fish)
-        rc="$HOME/.config/fish/config.fish"
-        line="fish_add_path $CARGO_BIN"
-        ;;
-    zsh)
-        rc="$HOME/.zshrc"
-        line="export PATH=\"$CARGO_BIN:\$PATH\""
-        ;;
-    *)
-        rc="$HOME/.bashrc"
-        line="export PATH=\"$CARGO_BIN:\$PATH\""
-        ;;
-esac
+# exists but isn't on PATH anywhere. Add it to every shell rc file that
+# actually exists on disk, rather than guessing from $SHELL - that env var
+# is the login shell recorded at session start and can be stale (e.g. zsh
+# launched from .bashrc without updating the passwd entry), so it doesn't
+# reliably say which rc file the next terminal will source.
+touched=()
+add_path_line() {
+    mkdir -p "$(dirname "$1")"
+    if ! grep -qF "$CARGO_BIN" "$1" 2>/dev/null; then
+        printf '\n# added by dotafetch install.sh\n%s\n' "$2" >> "$1"
+    fi
+    touched+=("$1")
+}
+[ -f "$HOME/.bashrc" ] && add_path_line "$HOME/.bashrc" "export PATH=\"$CARGO_BIN:\$PATH\""
+[ -f "$HOME/.zshrc" ] && add_path_line "$HOME/.zshrc" "export PATH=\"$CARGO_BIN:\$PATH\""
+[ -f "$HOME/.config/fish/config.fish" ] && add_path_line "$HOME/.config/fish/config.fish" "fish_add_path $CARGO_BIN"
 
-mkdir -p "$(dirname "$rc")"
-if ! grep -qF "$CARGO_BIN" "$rc" 2>/dev/null; then
-    printf '\n# added by dotafetch install.sh\n%s\n' "$line" >> "$rc"
+# No known rc file exists yet (fresh account) - fall back to creating one
+# for the shell that's actually about to read it.
+if [ ${#touched[@]} -eq 0 ]; then
+    case "$(basename "${SHELL:-}")" in
+        fish) add_path_line "$HOME/.config/fish/config.fish" "fish_add_path $CARGO_BIN" ;;
+        zsh) add_path_line "$HOME/.zshrc" "export PATH=\"$CARGO_BIN:\$PATH\"" ;;
+        *) add_path_line "$HOME/.bashrc" "export PATH=\"$CARGO_BIN:\$PATH\"" ;;
+    esac
 fi
 
 echo
-echo "Installed. $CARGO_BIN wasn't on your PATH, so it's been added to $rc."
-echo "Open a new terminal (or 'source $rc') and run 'dotafetch'."
+echo "Installed. $CARGO_BIN wasn't on your PATH, so it's been added to:"
+printf '  %s\n' "${touched[@]}"
+echo "Open a new terminal and run 'dotafetch'."
