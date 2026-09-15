@@ -1,5 +1,6 @@
 mod ansi;
 mod art;
+mod hero_icons;
 mod heroes;
 mod locate;
 mod render;

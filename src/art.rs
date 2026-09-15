@@ -4,6 +4,12 @@
 //! ANSI escapes and all) of the Dota 2 logo, in the same style Omarchy's
 //! fastfetch config uses for its distro logo. Embedded at build time so the
 //! binary stays self-contained.
+//!
+//! Source: `art/Dota2.png` (the icon-only mark, no "DOTA 2" wordmark),
+//! rendered via `chafa --format symbols --symbols block --size 52x26
+//! --colors full --color-space rgb --dither none art/Dota2.png`, then
+//! stripped of the leading/trailing `\x1b[?25l`/`\x1b[?25h` cursor-visibility
+//! escapes chafa emits. Re-run that command and re-strip to regenerate.
 
 use crate::ansi;
 

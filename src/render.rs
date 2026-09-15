@@ -6,6 +6,7 @@ use std::io::{IsTerminal, Write};
 
 use crate::ansi;
 use crate::art;
+use crate::hero_icons;
 use crate::heroes;
 use crate::stats::Stats;
 
@@ -29,8 +30,7 @@ struct Palette {
 
 impl Palette {
     fn detect() -> Self {
-        let enabled =
-            std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        let enabled = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
         if enabled {
             Palette {
                 dim: "\x1b[2m",
@@ -101,7 +101,6 @@ fn render_section(pal: &Palette, section: &Section, width: usize) -> Vec<String>
     out
 }
 
-
 // Nerd Font glyph placeholders, one per stat line - picked to fit each
 // stat for now; swap these out once the icon-pack feature lands. Written as
 // `\u{...}` escapes (rather than literal glyphs) so the exact codepoint is
@@ -120,6 +119,30 @@ const ICON_PEAK_GPM: &str = "\u{f155}"; // fa-usd
 const ICON_PEAK_XPM: &str = "\u{f0e7}"; // fa-bolt
 const ICON_PEAK_DURATION: &str = "\u{f017}"; // fa-clock-o
 const ICON_PEAK_NETWORTH: &str = "\u{f0d6}"; // fa-money
+
+/// Lays minimap icons for `hero_ids` out side-by-side into one horizontal
+/// strip (`hero_icons::HEIGHT` rows tall), one text row per icon pixel-row.
+/// A hero with no vendored icon (see `hero_icons.rs`) renders as blank
+/// space, so columns stay aligned regardless of which heroes are missing.
+fn hero_icon_strip(hero_ids: &[i32]) -> Vec<String> {
+    let blank = " ".repeat(hero_icons::WIDTH);
+    let icons: Vec<Vec<&str>> = hero_ids
+        .iter()
+        .map(|&id| match hero_icons::rows(id) {
+            Some(rows) => rows.iter().map(String::as_str).collect(),
+            None => vec![blank.as_str(); hero_icons::HEIGHT],
+        })
+        .collect();
+    (0..hero_icons::HEIGHT)
+        .map(|i| {
+            icons
+                .iter()
+                .map(|rows| rows[i])
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
 
 /// Formats one career-peak line: `<icon> <label>  <value><unit> (<heroes>)`,
 /// omitting the hero list entirely when the peak has no record yet.
@@ -159,23 +182,6 @@ fn build_sections(pal: &Palette, stats: &Stats) -> Vec<Section> {
     if !stats.top_heroes.is_empty() {
         let peaks = &stats.career_peaks;
         sections.push(Section {
-            title: "Career Peaks".to_string(),
-            lines: vec![
-                peak_line(ICON_PEAK_KILLS, "Most Kills:", "", &peaks.most_kills),
-                peak_line(ICON_PEAK_ASSISTS, "Most Assists:", "", &peaks.most_assists),
-                peak_line(ICON_PEAK_GPM, "Highest GPM:", "", &peaks.highest_gpm),
-                peak_line(ICON_PEAK_XPM, "Highest XPM:", "", &peaks.highest_xpm),
-                peak_line(ICON_PEAK_DURATION, "Longest Game:", "s", &peaks.longest_game),
-                peak_line(
-                    ICON_PEAK_NETWORTH,
-                    "Highest Net Worth:",
-                    "",
-                    &peaks.highest_net_worth,
-                ),
-            ],
-        });
-
-        sections.push(Section {
             title: "Top Heroes".to_string(),
             lines: stats
                 .top_heroes
@@ -196,6 +202,28 @@ fn build_sections(pal: &Palette, stats: &Stats) -> Vec<Section> {
                 })
                 .collect(),
         });
+
+        sections.push(Section {
+            title: "Career Peaks".to_string(),
+            lines: vec![
+                peak_line(ICON_PEAK_KILLS, "Most Kills:", "", &peaks.most_kills),
+                peak_line(ICON_PEAK_ASSISTS, "Most Assists:", "", &peaks.most_assists),
+                peak_line(ICON_PEAK_GPM, "Highest GPM:", "", &peaks.highest_gpm),
+                peak_line(ICON_PEAK_XPM, "Highest XPM:", "", &peaks.highest_xpm),
+                peak_line(
+                    ICON_PEAK_DURATION,
+                    "Longest Game:",
+                    "s",
+                    &peaks.longest_game,
+                ),
+                peak_line(
+                    ICON_PEAK_NETWORTH,
+                    "Highest Net Worth:",
+                    "",
+                    &peaks.highest_net_worth,
+                ),
+            ],
+        });
     }
 
     if let Some(conduct) = &stats.conduct {
@@ -209,7 +237,11 @@ fn build_sections(pal: &Palette, stats: &Stats) -> Vec<Section> {
                 ),
                 format!(
                     "{ICON_REPORTS} Reports:  {}{}{}",
-                    if conduct.reports_count > 0 { pal.red } else { "" },
+                    if conduct.reports_count > 0 {
+                        pal.red
+                    } else {
+                        ""
+                    },
                     conduct.reports_count,
                     pal.reset
                 ),
@@ -229,9 +261,16 @@ fn print_with_logo(right_lines: &[String]) {
     let logo = art::lines();
     let logo_width = art::width();
     let rows = logo.len().max(right_lines.len());
+    // Center the (usually shorter) logo vertically against the info panel,
+    // rather than pinning it to the top row.
+    let logo_offset = rows.saturating_sub(logo.len()) / 2;
 
     for i in 0..rows {
-        let logo_line = logo.get(i).map(String::as_str).unwrap_or("");
+        let logo_line = i
+            .checked_sub(logo_offset)
+            .and_then(|j| logo.get(j))
+            .map(String::as_str)
+            .unwrap_or("");
         let logo_pad = logo_width.saturating_sub(ansi::visible_width(logo_line));
         let right_line = right_lines.get(i).map(String::as_str).unwrap_or("");
         outln!("{logo_line}{}{GAP}{right_line}", " ".repeat(logo_pad));
@@ -271,8 +310,13 @@ pub fn print(persona_name: &str, stats: &Stats) {
         pal.reset
     );
 
+    let top_hero_ids: Vec<i32> = stats.top_heroes.iter().take(5).map(|h| h.hero_id).collect();
+
     let mut right = vec![header, String::new()];
     for section in &sections {
+        if section.title == "Top Heroes" {
+            right.extend(hero_icon_strip(&top_hero_ids));
+        }
         right.extend(render_section(&pal, section, width));
         right.push(String::new());
     }
