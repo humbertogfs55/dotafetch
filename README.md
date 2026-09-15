@@ -11,6 +11,15 @@ time; that's the only "external" data involved.
 Requires Dota 2 to have been run at least once on this machine so the
 client has written its local stats cache.
 
+## Install
+
+```
+curl -fsSL https://raw.githubusercontent.com/humbertogfs55/dotafetch/main/install.sh | bash
+```
+
+Requires the Rust toolchain (`cargo`) - see https://rustup.rs if you don't
+have it. Installs to `~/.cargo/bin/dotafetch`.
+
 ## Build & run
 
 ```
