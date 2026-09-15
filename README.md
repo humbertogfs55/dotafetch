@@ -1,4 +1,5 @@
 # dotafetch
+![alt text](image.png)
 fastfetch style fetch for dota 2 account info
 
 Reads Dota 2's local stat cache directly — no Steam login, no API key, no
